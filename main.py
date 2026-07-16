@@ -172,8 +172,9 @@ async def on_message(message):
             
             # Dynamically fetches history for the *current* channel only
             async for past_msg in message.channel.history(limit=10, before=message):
-                if past_msg.author.id == 1463361569424543898:
-                    continue  # Ignore this specific user
+                # IGNORE LIST: Now ignores both the original user and bot 1247291758857949224
+                if past_msg.author.id in (1463361569424543898, 1247291758857949224):
+                    continue  
                     
                 past_match = re.search(r'#(\d+)', past_msg.content)
                 if past_match:
