@@ -150,6 +150,10 @@ async def on_ready():
 
 @client.event
 async def on_message(message):
+    # HARD IGNORE: Instantly ignore any message sent by Nymeris
+    if message.author.id == 1247291758857949224:
+        return
+
     if message.author.bot and message.author != client.user:
         return
 
@@ -171,8 +175,9 @@ async def on_message(message):
             last_user_id = None
             
             # Dynamically fetches history for the *current* channel only
-            async for past_msg in message.channel.history(limit=10, before=message):
-                # IGNORE LIST: Now ignores both the original user and bot 1247291758857949224
+            async for past_msg in message.channel.history(limit=15, before=message):
+                # Skip Nymeris and the other ignored account entirely in history check
+                # and continue looking backward instead of stopping
                 if past_msg.author.id in (1463361569424543898, 1247291758857949224):
                     continue  
                     
@@ -182,7 +187,7 @@ async def on_message(message):
                     last_user_id = past_msg.author.id
                     if past_msg.author == client.user and past_msg.mentions:
                         last_user_id = past_msg.mentions[0].id
-                    break
+                    break # Successfully found the last valid number, stop searching
             
             if last_num != 0 and current_num > last_num + 1:
                 gap = range(last_num + 1, current_num)
