@@ -124,8 +124,9 @@ class AdjustCropView(discord.ui.View):
             image_binary.seek(0)
             file = discord.File(fp=image_binary, filename="cropped.png")
             
+            # Defer the interaction silently to update the image without sending ephemeral spam
+            await interaction.response.defer()
             await self.target_message.edit(attachments=[file])
-            await interaction.response.send_message(f"Adjusted offset to **{self.offset}px**", ephemeral=True)
 
     @discord.ui.button(label="⬆️ Move Up", style=discord.ButtonStyle.secondary)
     async def move_up(self, interaction: discord.Interaction, button: discord.ui.Button):
