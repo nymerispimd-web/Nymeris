@@ -57,6 +57,32 @@ client = discord.Client(intents=intents)
 
 # --- 4. UI VIEWS ---
 
+class EditPostModal(discord.ui.Modal, title="Edit Post"):
+    new_text = discord.ui.TextInput(
+        label="Message Text",
+        style=discord.TextStyle.paragraph,
+        placeholder="Enter updated message content...",
+        required=False,
+        max_length=2000
+    )
+
+    def __init__(self, target_message, author_mention):
+        super().__init__()
+        self.target_message = target_message
+        self.author_mention = author_mention
+
+        # Pre-fill modal input with existing text (stripping the author mention)
+        existing_text = target_message.content.replace(f"{author_mention} ", "").replace(author_mention, "")
+        self.new_text.default = existing_text
+
+    async def on_submit(self, interaction: discord.Interaction):
+        updated_content = f"{self.author_mention} {self.new_text.value}".strip()
+        try:
+            await self.target_message.edit(content=updated_content)
+            await interaction.response.send_message("✅ Post updated successfully!", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Failed to edit post: {e}", ephemeral=True)
+
 class ConfirmDeleteView(discord.ui.View):
     def __init__(self, original_message):
         super().__init__(timeout=60)
@@ -70,18 +96,33 @@ class ConfirmDeleteView(discord.ui.View):
         except:
             await interaction.response.send_message("I couldn't delete that message.", ephemeral=True)
 
-class DeleteButtonView(discord.ui.View):
+class PostActionView(discord.ui.View):
     def __init__(self, owner_id):
         super().__init__(timeout=None)
         self.owner_id = owner_id
 
+    def can_manage(self, interaction: discord.Interaction) -> bool:
+        """Check if user is the post owner OR has Administrator permissions."""
+        is_owner = interaction.user.id == self.owner_id
+        is_admin = interaction.user.guild_permissions.administrator if interaction.guild else False
+        return is_owner or is_admin
+
+    @discord.ui.button(label="Edit Post", style=discord.ButtonStyle.primary)
+    async def edit_request(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.can_manage(interaction):
+            author_mention = f"<@{self.owner_id}>"
+            modal = EditPostModal(target_message=interaction.message, author_mention=author_mention)
+            await interaction.response.send_modal(modal)
+        else:
+            await interaction.response.send_message("Only the author or Server Administrators can edit this post!", ephemeral=True)
+
     @discord.ui.button(label="Delete Post", style=discord.ButtonStyle.secondary)
     async def delete_request(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id == self.owner_id:
+        if self.can_manage(interaction):
             view = ConfirmDeleteView(original_message=interaction.message)
             await interaction.response.send_message(content="⚠️ **Delete this post?**", view=view, ephemeral=True)
         else:
-            await interaction.response.send_message("Only the person who triggered this can delete it!", ephemeral=True)
+            await interaction.response.send_message("Only the author or Server Administrators can delete this post!", ephemeral=True)
 
 class DeviceSelectView(discord.ui.View):
     def __init__(self):
@@ -128,7 +169,7 @@ async def perform_crop(message, attachments, clean_text, offset):
                 image_binary.seek(0)
                 
                 file = discord.File(fp=image_binary, filename="cropped.png")
-                view = DeleteButtonView(owner_id=message.author.id)
+                view = PostActionView(owner_id=message.author.id)
                 content = f"{message.author.mention} {clean_text}"
                 
                 await message.channel.send(content=content, file=file, view=view)
