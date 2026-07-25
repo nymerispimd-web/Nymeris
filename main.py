@@ -58,36 +58,47 @@ client = discord.Client(intents=intents)
 # --- 4. IMAGE PROCESSING HELPERS ---
 
 def build_collage(imgs_bytes, offsets):
-    """Crops each image with its corresponding offset and stacks them vertically."""
-    cropped_imgs = []
-    for img_data, offset in zip(imgs_bytes, offsets):
-        img = Image.open(io.BytesIO(img_data))
-        width, height = img.size
-        
-        if height > width:
-            max_off = max(0, height - width)
+    """
+    Crops images and stacks them vertically into a combined 1:1 square output.
+    Each photo is given an equal slice height (Square Width / Number of Images).
+    """
+    raw_imgs = [Image.open(io.BytesIO(data)) for data in imgs_bytes]
+    if not raw_imgs:
+        return None
+
+    # Determine canvas width (use the largest width among uploaded images)
+    canvas_width = max(img.width for img in raw_imgs)
+    canvas_height = canvas_width  # Enforce 1:1 ratio for the whole collage
+    
+    num_imgs = len(raw_imgs)
+    target_slice_height = canvas_height // num_imgs
+
+    cropped_slices = []
+    for i, img in enumerate(raw_imgs):
+        w, h = img.size
+        offset = offsets[i]
+
+        # Crop region height relative to image width
+        crop_h = int(w / num_imgs)
+
+        if h > crop_h:
+            max_off = max(0, h - crop_h)
             valid_offset = max(0, min(offset, max_off))
-            box = (0, valid_offset, width, valid_offset + width)
+            box = (0, valid_offset, w, valid_offset + crop_h)
             cropped = img.crop(box)
         else:
             cropped = img
-            
-        cropped_imgs.append(cropped)
 
-    if not cropped_imgs:
-        return None
+        # Resize slice to fit the output canvas exact slice width/height
+        resized_slice = cropped.resize((canvas_width, target_slice_height), Image.Resampling.LANCZOS)
+        cropped_slices.append(resized_slice)
 
-    # Calculate total dimensions for stacking
-    max_w = max(c.width for c in cropped_imgs)
-    total_h = sum(c.height for c in cropped_imgs)
-
-    canvas = Image.new('RGB', (max_w, total_h), (0, 0, 0))
+    # Combine all slices onto a 1:1 canvas
+    canvas = Image.new('RGB', (canvas_width, canvas_height), (0, 0, 0))
     current_y = 0
-    for c in cropped_imgs:
-        # Center horizontally if widths differ
-        x_pos = (max_w - c.width) // 2
-        canvas.paste(c, (x_pos, current_y))
-        current_y += c.height
+    for slice_img in cropped_slices:
+        canvas.paste(slice_img, (0, current_y))
+        current_y += slice_img.height
 
     out_binary = io.BytesIO()
     canvas.save(out_binary, 'PNG')
@@ -134,46 +145,67 @@ class ConfirmDeleteView(discord.ui.View):
         except:
             await interaction.response.send_message("I couldn't delete that message.", ephemeral=True)
 
-class SingleCropAdjustView(discord.ui.View):
-    """Ephemeral control view for shifting a specific photo in the collage."""
-    def __init__(self, target_message, imgs_bytes, offsets, photo_index, owner_id):
-        super().__init__(timeout=120)
+class MultiCropAdjustView(discord.ui.View):
+    """Single ephemeral message view providing controls for all photos at once."""
+    def __init__(self, target_message, imgs_bytes, offsets, owner_id):
+        super().__init__(timeout=180)
         self.target_message = target_message
         self.imgs_bytes = imgs_bytes
         self.offsets = offsets
-        self.photo_index = photo_index
         self.owner_id = owner_id
+
+        # Dynamically build buttons depending on 1 or 2 images attached
+        num_photos = len(imgs_bytes)
+
+        if num_photos == 1:
+            btn_up1 = discord.ui.Button(label="⬆️ Move Up", style=discord.ButtonStyle.secondary, row=0)
+            btn_down1 = discord.ui.Button(label="⬇️ Move Down", style=discord.ButtonStyle.secondary, row=0)
+            btn_up1.callback = lambda i: self.shift_photo(i, 0, -50)
+            btn_down1.callback = lambda i: self.shift_photo(i, 0, 50)
+            self.add_item(btn_up1)
+            self.add_item(btn_down1)
+        else:
+            # Row 0: Photo 1 Controls
+            btn_up1 = discord.ui.Button(label="[1] ⬆️ Move Up", style=discord.ButtonStyle.primary, row=0)
+            btn_down1 = discord.ui.Button(label="[1] ⬇️ Move Down", style=discord.ButtonStyle.primary, row=0)
+            btn_up1.callback = lambda i: self.shift_photo(i, 0, -50)
+            btn_down1.callback = lambda i: self.shift_photo(i, 0, 50)
+            self.add_item(btn_up1)
+            self.add_item(btn_down1)
+
+            # Row 1: Photo 2 Controls
+            btn_up2 = discord.ui.Button(label="[2] ⬆️ Move Up", style=discord.ButtonStyle.secondary, row=1)
+            btn_down2 = discord.ui.Button(label="[2] ⬇️ Move Down", style=discord.ButtonStyle.secondary, row=1)
+            btn_up2.callback = lambda i: self.shift_photo(i, 1, -50)
+            btn_down2.callback = lambda i: self.shift_photo(i, 1, 50)
+            self.add_item(btn_up2)
+            self.add_item(btn_down2)
+
+        # Bottom Row: Done Button
+        btn_done = discord.ui.Button(label="✅ Done", style=discord.ButtonStyle.success, row=2)
+        btn_done.callback = self.done_callback
+        self.add_item(btn_done)
 
     def can_manage(self, interaction: discord.Interaction) -> bool:
         is_owner = interaction.user.id == self.owner_id
         is_admin = interaction.user.guild_permissions.administrator if interaction.guild else False
         return is_owner or is_admin
 
-    async def update_collage(self, interaction: discord.Interaction):
+    async def shift_photo(self, interaction: discord.Interaction, photo_idx: int, delta: int):
+        if not self.can_manage(interaction):
+            return await interaction.response.send_message("Permission denied.", ephemeral=True)
+
+        self.offsets[photo_idx] += delta
         out_binary = build_collage(self.imgs_bytes, self.offsets)
         file = discord.File(fp=out_binary, filename="cropped.png")
+
         await interaction.response.defer()
         await self.target_message.edit(attachments=[file])
 
-    @discord.ui.button(label="⬆️ Move Up", style=discord.ButtonStyle.secondary)
-    async def move_up(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def done_callback(self, interaction: discord.Interaction):
         if not self.can_manage(interaction):
             return await interaction.response.send_message("Permission denied.", ephemeral=True)
-        self.offsets[self.photo_index] -= 50
-        await self.update_collage(interaction)
-
-    @discord.ui.button(label="⬇️ Move Down", style=discord.ButtonStyle.secondary)
-    async def move_down(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self.can_manage(interaction):
-            return await interaction.response.send_message("Permission denied.", ephemeral=True)
-        self.offsets[self.photo_index] += 50
-        await self.update_collage(interaction)
-
-    @discord.ui.button(label="✅ Done", style=discord.ButtonStyle.success)
-    async def done(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self.can_manage(interaction):
-            return await interaction.response.send_message("Permission denied.", ephemeral=True)
-        await interaction.response.send_message(f"✅ Photo {self.photo_index + 1} crop saved!", ephemeral=True)
+        await interaction.response.send_message("✅ Crop positions saved!", ephemeral=True)
         self.stop()
 
 class PostActionView(discord.ui.View):
@@ -196,20 +228,15 @@ class PostActionView(discord.ui.View):
         if not self.imgs_bytes:
             return await interaction.response.send_message("Original image data unavailable.", ephemeral=True)
 
-        # Spawn ephemeral adjustment controls for each photo attached
-        for idx in range(len(self.imgs_bytes)):
-            view = SingleCropAdjustView(
-                target_message=interaction.message,
-                imgs_bytes=self.imgs_bytes,
-                offsets=self.offsets,
-                photo_index=idx,
-                owner_id=self.owner_id
-            )
-            await interaction.response.send_message(
-                f"📷 **Controls for Photo {idx + 1}:**",
-                view=view,
-                ephemeral=True
-            )
+        view = MultiCropAdjustView(
+            target_message=interaction.message,
+            imgs_bytes=self.imgs_bytes,
+            offsets=self.offsets,
+            owner_id=self.owner_id
+        )
+
+        header_text = "📷 **Crop Adjustments:**" if len(self.imgs_bytes) == 1 else "📷 **Photo 1 & Photo 2 Crop Controls:**"
+        await interaction.response.send_message(header_text, view=view, ephemeral=True)
 
     @discord.ui.button(label="Edit Post", style=discord.ButtonStyle.primary)
     async def edit_request(self, interaction: discord.Interaction, button: discord.ui.Button):
