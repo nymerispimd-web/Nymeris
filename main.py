@@ -71,7 +71,6 @@ class EditPostModal(discord.ui.Modal, title="Edit Post"):
         self.target_message = target_message
         self.author_mention = author_mention
 
-        # Pre-fill modal input with existing text (stripping the author mention)
         existing_text = target_message.content.replace(f"{author_mention} ", "").replace(author_mention, "")
         self.new_text.default = existing_text
 
@@ -96,16 +95,80 @@ class ConfirmDeleteView(discord.ui.View):
         except:
             await interaction.response.send_message("I couldn't delete that message.", ephemeral=True)
 
-class PostActionView(discord.ui.View):
-    def __init__(self, owner_id):
-        super().__init__(timeout=None)
+class AdjustCropView(discord.ui.View):
+    def __init__(self, target_message, img_bytes, current_offset, owner_id):
+        super().__init__(timeout=120)
+        self.target_message = target_message
+        self.img_bytes = img_bytes
+        self.offset = current_offset
         self.owner_id = owner_id
 
     def can_manage(self, interaction: discord.Interaction) -> bool:
-        """Check if user is the post owner OR has Administrator permissions."""
         is_owner = interaction.user.id == self.owner_id
         is_admin = interaction.user.guild_permissions.administrator if interaction.guild else False
         return is_owner or is_admin
+
+    async def re_crop_and_update(self, interaction: discord.Interaction):
+        img = Image.open(io.BytesIO(self.img_bytes))
+        width, height = img.size
+        
+        # Clamp offset so it stays within valid bounds
+        max_offset = max(0, height - width)
+        self.offset = max(0, min(self.offset, max_offset))
+
+        box = (0, self.offset, width, self.offset + width)
+        cropped_img = img.crop(box)
+
+        with io.BytesIO() as image_binary:
+            cropped_img.save(image_binary, 'PNG')
+            image_binary.seek(0)
+            file = discord.File(fp=image_binary, filename="cropped.png")
+            
+            await self.target_message.edit(attachments=[file])
+            await interaction.response.send_message(f"Adjusted offset to **{self.offset}px**", ephemeral=True)
+
+    @discord.ui.button(label="⬆️ Move Up", style=discord.ButtonStyle.secondary)
+    async def move_up(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.can_manage(interaction):
+            return await interaction.response.send_message("You cannot adjust this crop.", ephemeral=True)
+        self.offset -= 50
+        await self.re_crop_and_update(interaction)
+
+    @discord.ui.button(label="⬇️ Move Down", style=discord.ButtonStyle.secondary)
+    async def move_down(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.can_manage(interaction):
+            return await interaction.response.send_message("You cannot adjust this crop.", ephemeral=True)
+        self.offset += 50
+        await self.re_crop_and_update(interaction)
+
+    @discord.ui.button(label="✅ Done", style=discord.ButtonStyle.success)
+    async def done(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.can_manage(interaction):
+            return await interaction.response.send_message("You cannot adjust this crop.", ephemeral=True)
+        await interaction.response.send_message("✅ Crop saved!", ephemeral=True)
+        self.stop()
+
+class PostActionView(discord.ui.View):
+    def __init__(self, owner_id, img_bytes=None, current_offset=110):
+        super().__init__(timeout=None)
+        self.owner_id = owner_id
+        self.img_bytes = img_bytes
+        self.current_offset = current_offset
+
+    def can_manage(self, interaction: discord.Interaction) -> bool:
+        is_owner = interaction.user.id == self.owner_id
+        is_admin = interaction.user.guild_permissions.administrator if interaction.guild else False
+        return is_owner or is_admin
+
+    @discord.ui.button(label="Adjust Crop", style=discord.ButtonStyle.secondary)
+    async def adjust_crop_request(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.can_manage(interaction):
+            if not self.img_bytes:
+                return await interaction.response.send_message("Original image data is unavailable for adjustment.", ephemeral=True)
+            view = AdjustCropView(interaction.message, self.img_bytes, self.current_offset, self.owner_id)
+            await interaction.response.send_message("Use the buttons below to shift the crop position up or down:", view=view, ephemeral=True)
+        else:
+            await interaction.response.send_message("Only the author or Server Administrators can adjust this crop!", ephemeral=True)
 
     @discord.ui.button(label="Edit Post", style=discord.ButtonStyle.primary)
     async def edit_request(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -116,7 +179,7 @@ class PostActionView(discord.ui.View):
         else:
             await interaction.response.send_message("Only the author or Server Administrators can edit this post!", ephemeral=True)
 
-    @discord.ui.button(label="Delete Post", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Delete Post", style=discord.ButtonStyle.danger)
     async def delete_request(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.can_manage(interaction):
             view = ConfirmDeleteView(original_message=interaction.message)
@@ -169,7 +232,7 @@ async def perform_crop(message, attachments, clean_text, offset):
                 image_binary.seek(0)
                 
                 file = discord.File(fp=image_binary, filename="cropped.png")
-                view = PostActionView(owner_id=message.author.id)
+                view = PostActionView(owner_id=message.author.id, img_bytes=img_bytes, current_offset=offset)
                 content = f"{message.author.mention} {clean_text}"
                 
                 await message.channel.send(content=content, file=file, view=view)
@@ -215,10 +278,7 @@ async def on_message(message):
             last_num = 0
             last_user_id = None
             
-            # Dynamically fetches history for the *current* channel only
             async for past_msg in message.channel.history(limit=15, before=message):
-                # Skip Nymeris and the other ignored account entirely in history check
-                # and continue looking backward instead of stopping
                 if past_msg.author.id in (1463361569424543898, 1247291758857949224):
                     continue  
                     
@@ -228,7 +288,7 @@ async def on_message(message):
                     last_user_id = past_msg.author.id
                     if past_msg.author == client.user and past_msg.mentions:
                         last_user_id = past_msg.mentions[0].id
-                    break # Successfully found the last valid number, stop searching
+                    break
             
             if last_num != 0 and current_num > last_num + 1:
                 gap = range(last_num + 1, current_num)
