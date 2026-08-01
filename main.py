@@ -296,6 +296,9 @@ async def perform_crop(message, attachments, clean_text, default_offset):
     if not imgs_bytes:
         return False
 
+    if len(imgs_bytes) == 1 and Image.open(io.BytesIO(imgs_bytes[0])).height < Image.open(io.BytesIO(imgs_bytes[0])).width:
+        return False
+
     try:
         out_binary = build_collage(imgs_bytes, offsets)
         if not out_binary:
