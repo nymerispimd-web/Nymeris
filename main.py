@@ -423,7 +423,7 @@ async def on_message(message):
     if image_attachments:
         prefs = load_prefs()
         user_id_str = str(message.author.id)
-        ios_users = [730138298621886544, 1454173039942963333, 1489206924045189140]
+        ios_users = [730138298621886544, 1454173039942963333, 1489206924045189140, 970522360220368906]
         default_device = "ios" if message.author.id in ios_users else "android"
         device = prefs.get(user_id_str, default_device)
         offset = 185 if device == "ios" else 110
