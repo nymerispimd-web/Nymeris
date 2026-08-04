@@ -59,12 +59,19 @@ client = discord.Client(intents=intents)
 
 def build_collage(imgs_bytes, offsets):
     """
-    Crops images and stacks them vertically into a combined 1:1 square output.
-    Each photo is given an equal slice height (Square Width / Number of Images).
+    Crops images and stacks them vertically into a combined output.
+    If a single image has width > height, it avoids 1:1 cropping and preserves aspect ratio.
     """
     raw_imgs = [Image.open(io.BytesIO(data)) for data in imgs_bytes]
     if not raw_imgs:
         return None
+
+    # If single image is landscape (width > height), do not crop to 1:1
+    if len(raw_imgs) == 1 and raw_imgs[0].width > raw_imgs[0].height:
+        out_binary = io.BytesIO()
+        raw_imgs[0].save(out_binary, 'PNG')
+        out_binary.seek(0)
+        return out_binary
 
     # Determine canvas width (use the largest width among uploaded images)
     canvas_width = max(img.width for img in raw_imgs)
@@ -296,9 +303,6 @@ async def perform_crop(message, attachments, clean_text, default_offset):
     if not imgs_bytes:
         return False
 
-    if len(imgs_bytes) == 1 and Image.open(io.BytesIO(imgs_bytes[0])).height < Image.open(io.BytesIO(imgs_bytes[0])).width:
-        return False
-
     try:
         out_binary = build_collage(imgs_bytes, offsets)
         if not out_binary:
@@ -308,7 +312,7 @@ async def perform_crop(message, attachments, clean_text, default_offset):
         view = PostActionView(owner_id=message.author.id, imgs_bytes=imgs_bytes, offsets=offsets)
         content = f"{message.author.mention} {clean_text}".strip()
 
-        await message.channel.send(content=content, file=file, view=view)
+        await message.channel.send(content=content, file=file, view=view, silent=True)
 
         try:
             await message.delete()
@@ -379,7 +383,7 @@ async def on_message(message):
 
     if message.author == client.user:
         if missed_message:
-            await message.channel.send(missed_message, allowed_mentions=discord.AllowedMentions.all())
+            await message.channel.send(missed_message, allowed_mentions=discord.AllowedMentions.all(), silent=True)
         return
 
     # --- IMAGE & CROP LOGIC ---
@@ -399,7 +403,7 @@ async def on_message(message):
                 del prefs[user_id_str]
                 with open(PREFS_FILE, "w") as f:
                     json.dump(prefs, f)
-            await message.channel.send("✅ Preference cleared.", delete_after=5)
+            await message.channel.send("✅ Preference cleared.", delete_after=5, silent=True)
             try: await message.delete()
             except: pass
             return
@@ -408,7 +412,8 @@ async def on_message(message):
             view = DeviceSelectView()
             await message.channel.send(
                 f"{message.author.mention}, would you like to use Android or iOS crop settings?",
-                view=view
+                view=view,
+                silent=True
             )
             try: await message.delete()
             except: pass
@@ -427,7 +432,7 @@ async def on_message(message):
     if missed_message:
         if crop_performed:
             await asyncio.sleep(2) 
-        await message.channel.send(missed_message, allowed_mentions=discord.AllowedMentions.all())
+        await message.channel.send(missed_message, allowed_mentions=discord.AllowedMentions.all(), silent=True)
 
 # --- 8. START ---
 if TOKEN:
