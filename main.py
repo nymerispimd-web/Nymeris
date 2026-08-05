@@ -172,7 +172,6 @@ class MultiCropAdjustView(discord.ui.View):
         self.offsets = offsets
         self.owner_id = owner_id
 
-        # Dynamically build buttons depending on 1 or 2 images attached
         num_photos = len(imgs_bytes)
 
         if num_photos == 1:
@@ -183,7 +182,6 @@ class MultiCropAdjustView(discord.ui.View):
             self.add_item(btn_up1)
             self.add_item(btn_down1)
         else:
-            # Row 0: Photo 1 Controls
             btn_up1 = discord.ui.Button(label="[1] ⬆️ Move Up", style=discord.ButtonStyle.primary, row=0)
             btn_down1 = discord.ui.Button(label="[1] ⬇️ Move Down", style=discord.ButtonStyle.primary, row=0)
             btn_up1.callback = lambda i: self.shift_photo(i, 0, -50)
@@ -191,7 +189,6 @@ class MultiCropAdjustView(discord.ui.View):
             self.add_item(btn_up1)
             self.add_item(btn_down1)
 
-            # Row 1: Photo 2 Controls
             btn_up2 = discord.ui.Button(label="[2] ⬆️ Move Up", style=discord.ButtonStyle.secondary, row=1)
             btn_down2 = discord.ui.Button(label="[2] ⬇️ Move Down", style=discord.ButtonStyle.secondary, row=1)
             btn_up2.callback = lambda i: self.shift_photo(i, 1, -50)
@@ -199,7 +196,6 @@ class MultiCropAdjustView(discord.ui.View):
             self.add_item(btn_up2)
             self.add_item(btn_down2)
 
-        # Bottom Row: Done Button
         btn_done = discord.ui.Button(label="✅ Done", style=discord.ButtonStyle.success, row=2)
         btn_done.callback = self.done_callback
         self.add_item(btn_done)
@@ -365,32 +361,46 @@ async def on_message(message):
             
             last_num = 0
             last_user_id = None
+            resolved_numbers = set()
             
-            async for past_msg in message.channel.history(limit=15, before=message):
+            async for past_msg in message.channel.history(limit=25, before=message):
+                # If a notice was marked as resolved, collect the numbers inside it
+                if past_msg.author == client.user and "✅ **Resolved**" in past_msg.content:
+                    range_match = re.search(r'#(\d+) through (\d+)', past_msg.content)
+                    if range_match:
+                        start_n, end_n = int(range_match.group(1)), int(range_match.group(2))
+                        resolved_numbers.update(range(start_n, end_n + 1))
+                    else:
+                        list_match = re.findall(r'#(\d+)', past_msg.content)
+                        for n_str in list_match:
+                            resolved_numbers.add(int(n_str))
+
                 if past_msg.author.id in (1463361569424543898, 1247291758857949224):
                     continue  
                     
                 past_match = re.search(r'#(\d+)', past_msg.content)
-                if past_match:
+                if past_match and last_num == 0:
                     last_num = int(past_match.group(1))
                     last_user_id = past_msg.author.id
                     if past_msg.author == client.user and past_msg.mentions:
                         last_user_id = past_msg.mentions[0].id
-                    break
             
             if last_num != 0 and current_num > last_num + 1:
-                gap = range(last_num + 1, current_num)
-                if len(gap) > 30:
-                    missed_nums = f"{last_num + 1} through {current_num - 1}"
-                else:
-                    missed_nums = ", #".join([str(i) for i in gap])
+                # Exclude any numbers that were marked resolved
+                gap = [i for i in range(last_num + 1, current_num) if i not in resolved_numbers]
                 
-                if last_user_id and str(last_user_id) != str(actual_user_id):
-                    tags = f"<@{last_user_id}> {actual_user_mention}"
-                else:
-                    tags = actual_user_mention
+                if gap:
+                    if len(gap) > 30:
+                        missed_nums = f"{gap[0]} through {gap[-1]}"
+                    else:
+                        missed_nums = ", #".join([str(i) for i in gap])
                     
-                missed_message = f"{tags} ⚠️ Party number #{missed_nums} is missing."
+                    if last_user_id and str(last_user_id) != str(actual_user_id):
+                        tags = f"<@{last_user_id}> {actual_user_mention}"
+                    else:
+                        tags = actual_user_mention
+                        
+                    missed_message = f"{tags} ⚠️ Party number #{missed_nums} is missing."
 
     if message.author == client.user:
         if missed_message:
