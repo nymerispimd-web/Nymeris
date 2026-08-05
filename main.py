@@ -114,6 +114,17 @@ def build_collage(imgs_bytes, offsets):
 
 # --- 5. UI VIEWS ---
 
+class ResolveNoticeView(discord.ui.View):
+    """View attached to party number gap warnings to mark them resolved."""
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Mark as Resolved", style=discord.ButtonStyle.success, emoji="✅")
+    async def resolve_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+        original_text = interaction.message.content
+        updated_text = f"~~{original_text}~~\n\n✅ **Resolved** by {interaction.user.mention}"
+        await interaction.response.edit_message(content=updated_text, view=None)
+
 class EditPostModal(discord.ui.Modal, title="Edit Post"):
     new_text = discord.ui.TextInput(
         label="Message Text",
@@ -383,7 +394,12 @@ async def on_message(message):
 
     if message.author == client.user:
         if missed_message:
-            await message.channel.send(missed_message, allowed_mentions=discord.AllowedMentions.all(), silent=True)
+            await message.channel.send(
+                missed_message, 
+                allowed_mentions=discord.AllowedMentions.all(), 
+                view=ResolveNoticeView(), 
+                silent=True
+            )
         return
 
     # --- IMAGE & CROP LOGIC ---
@@ -432,7 +448,12 @@ async def on_message(message):
     if missed_message:
         if crop_performed:
             await asyncio.sleep(2) 
-        await message.channel.send(missed_message, allowed_mentions=discord.AllowedMentions.all(), silent=True)
+        await message.channel.send(
+            missed_message, 
+            allowed_mentions=discord.AllowedMentions.all(), 
+            view=ResolveNoticeView(), 
+            silent=True
+        )
 
 # --- 8. START ---
 if TOKEN:
