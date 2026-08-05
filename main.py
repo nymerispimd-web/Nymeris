@@ -363,17 +363,19 @@ async def on_message(message):
             last_user_id = None
             resolved_numbers = set()
             
-            async for past_msg in message.channel.history(limit=25, before=message):
-                # If a notice was marked as resolved, collect the numbers inside it
+            async for past_msg in message.channel.history(limit=30, before=message):
+                # Parse resolved notices and include missing numbers AND their adjacent boundary numbers
                 if past_msg.author == client.user and "✅ **Resolved**" in past_msg.content:
                     range_match = re.search(r'#(\d+) through (\d+)', past_msg.content)
                     if range_match:
                         start_n, end_n = int(range_match.group(1)), int(range_match.group(2))
-                        resolved_numbers.update(range(start_n, end_n + 1))
+                        # Include missing range plus adjacent boundary numbers (start_n - 1) and (end_n + 1)
+                        resolved_numbers.update(range(max(1, start_n - 1), end_n + 2))
                     else:
-                        list_match = re.findall(r'#(\d+)', past_msg.content)
-                        for n_str in list_match:
-                            resolved_numbers.add(int(n_str))
+                        list_match = [int(x) for x in re.findall(r'#(\d+)', past_msg.content)]
+                        if list_match:
+                            for n in list_match:
+                                resolved_numbers.update([n - 1, n, n + 1])
 
                 if past_msg.author.id in (1463361569424543898, 1247291758857949224):
                     continue  
@@ -386,7 +388,7 @@ async def on_message(message):
                         last_user_id = past_msg.mentions[0].id
             
             if last_num != 0 and current_num > last_num + 1:
-                # Exclude any numbers that were marked resolved
+                # Exclude numbers marked resolved or adjacently resolved
                 gap = [i for i in range(last_num + 1, current_num) if i not in resolved_numbers]
                 
                 if gap:
